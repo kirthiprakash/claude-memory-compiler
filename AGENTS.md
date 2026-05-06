@@ -6,71 +6,88 @@
 ## The Compiler Analogy
 
 ```
-daily/          = source code    (your conversations - the raw material)
-LLM             = compiler       (extracts and organizes knowledge)
-knowledge/      = executable     (structured, queryable knowledge base)
-lint            = test suite     (health checks for consistency)
-queries         = runtime        (using the knowledge)
+daily-YYYY-MM-DD.md  = source code  (your conversations - the raw material)
+LLM                  = compiler     (extracts and organizes knowledge)
+knowledge articles   = executable   (structured, queryable knowledge base)
+lint                 = test suite   (health checks for consistency)
+queries              = runtime      (using the knowledge)
 ```
 
 You don't manually organize your knowledge. You have conversations, and the LLM handles the synthesis, cross-referencing, and maintenance.
+
+## Output Location
+
+All generated files (daily logs + knowledge articles + index) are written to a single flat directory — the **vault** — controlled by the `MEMORY_OUTPUT_DIR` environment variable. If unset, the vault is the repo root. Setting it to a Tolaria or Obsidian vault makes the output render as native notes.
+
+```
+$VAULT/
+├── daily-2026-04-01.md          # Daily logs (type: Daily Log)
+├── daily-2026-04-02.md
+├── claude-memory-index.md       # Master catalog of knowledge articles
+├── supabase-auth.md             # Knowledge articles (type: Knowledge Article)
+├── auth-and-webhooks.md         # Connection articles (type: Connection)
+├── how-to-handle-auth.md        # Filed Q&A answers (type: Q&A)
+└── ...
+```
+
+Articles are distinguished by `type:` frontmatter, not subdirectories — flat by design so they coexist with other vault notes.
 
 ---
 
 ## Architecture
 
-### Layer 1: `daily/` - Conversation Logs (Immutable Source)
+### Layer 1: Daily Logs (Immutable Source)
 
-Daily logs capture what happened in your AI coding sessions. These are the "raw sources" - append-only, never edited after the fact.
+Daily logs capture what happened in your AI coding sessions. Filename: `daily-YYYY-MM-DD.md` at the vault root.
 
-```
-daily/
-├── 2026-04-01.md
-├── 2026-04-02.md
-├── ...
-```
-
-Each file follows this format:
+Format:
 
 ```markdown
+---
+type: Daily Log
+date: YYYY-MM-DD
+---
 # Daily Log: YYYY-MM-DD
 
 ## Sessions
 
-### Session (HH:MM) - Brief Title
+### Session (HH:MM)
 
 **Context:** What the user was working on.
 
 **Key Exchanges:**
 - User asked about X, assistant explained Y
 - Decided to use Z approach because...
-- Discovered that W doesn't work when...
 
 **Decisions Made:**
 - Chose library X over Y because...
-- Architecture: went with pattern Z
 
 **Lessons Learned:**
 - Always do X before Y to avoid...
-- The gotcha with Z is that...
 
 **Action Items:**
 - [ ] Follow up on X
-- [ ] Refactor Y when time permits
+
+## Memory Maintenance
+
+### Memory Flush (HH:MM)
+
+FLUSH_OK - Nothing worth saving from this session
 ```
 
-### Layer 2: `knowledge/` - Compiled Knowledge (LLM-Owned)
+Session entries route under `## Sessions`, FLUSH_OK / FLUSH_ERROR entries route under `## Memory Maintenance`. The file is appended throughout the day by `flush.py`.
 
-The LLM owns this directory entirely. Humans read it but rarely edit it directly.
+### Layer 2: Knowledge Articles (LLM-Owned)
 
-```
-knowledge/
-├── index.md              # Master catalog - every article with one-line summary
-├── log.md                # Append-only chronological build log
-├── concepts/             # Atomic knowledge articles
-├── connections/          # Cross-cutting insights linking 2+ concepts
-└── qa/                   # Filed query answers (compounding knowledge)
-```
+Compiled by `compile.py` from daily logs. Flat `.md` files at the vault root, distinguished by `type:` frontmatter:
+
+| `type:` value | Purpose |
+|---------------|---------|
+| `Knowledge Article` | Atomic concept (one per topic) |
+| `Connection` | Cross-cutting synthesis linking 2+ concepts |
+| `Q&A` | Filed query answer |
+
+Plus the index file `claude-memory-index.md` (master catalog).
 
 ### Layer 3: This File (AGENTS.md)
 
@@ -80,57 +97,40 @@ The schema that tells the LLM how to compile and maintain the knowledge base. Th
 
 ## Structural Files
 
-### `knowledge/index.md` - Master Catalog
+### `claude-memory-index.md` - Master Catalog
 
-A table listing every knowledge article. This is the primary retrieval mechanism - the LLM reads this FIRST when answering any query, then selects relevant articles to read in full.
+A table listing every knowledge article. This is the primary retrieval mechanism — the LLM reads this FIRST when answering any query, then selects relevant articles to read in full.
 
 Format:
 
 ```markdown
-# Knowledge Base Index
+# Claude Memory Index
 
 | Article | Summary | Compiled From | Updated |
 |---------|---------|---------------|---------|
-| [[concepts/supabase-auth]] | Row-level security patterns and JWT gotchas | daily/2026-04-02.md | 2026-04-02 |
-| [[connections/auth-and-webhooks]] | Token verification patterns shared across Supabase auth and Stripe webhooks | daily/2026-04-02.md, daily/2026-04-04.md | 2026-04-04 |
+| [[supabase-auth]] | Row-level security patterns and JWT gotchas | daily-2026-04-02 | 2026-04-02 |
+| [[auth-and-webhooks]] | Token verification patterns shared across auth and webhooks | daily-2026-04-02, daily-2026-04-04 | 2026-04-04 |
 ```
 
-### `knowledge/log.md` - Build Log
-
-Append-only chronological record of every compile, query, and lint operation.
-
-Format:
-
-```markdown
-# Build Log
-
-## [2026-04-01T14:30:00] compile | Daily Log 2026-04-01
-- Source: daily/2026-04-01.md
-- Articles created: [[concepts/nextjs-project-structure]], [[concepts/tailwind-setup]]
-- Articles updated: (none)
-
-## [2026-04-02T09:00:00] query | "How do I handle auth redirects?"
-- Consulted: [[concepts/supabase-auth]], [[concepts/nextjs-middleware]]
-- Filed to: [[qa/auth-redirect-handling]]
-```
+Wikilinks use the slug (filename without extension) — no subfolder prefix, since articles are flat.
 
 ---
 
 ## Article Formats
 
-### Concept Articles (`knowledge/concepts/`)
+All knowledge articles are flat `.md` files at the vault root, distinguished by `type:` frontmatter.
 
-One article per atomic piece of knowledge. These are facts, patterns, decisions, preferences, and lessons extracted from your conversations.
+### Knowledge Article (`type: Knowledge Article`)
+
+One article per atomic piece of knowledge. Filename: `kebab-case-slug.md`.
 
 ```markdown
 ---
-title: "Concept Name"
-aliases: [alternate-name, abbreviation]
+type: Knowledge Article
 tags: [domain, topic]
 sources:
-  - "daily/2026-04-01.md"
-  - "daily/2026-04-03.md"
-created: 2026-04-01
+  - "[[daily-2026-04-01]]"
+  - "[[daily-2026-04-03]]"
 updated: 2026-04-03
 ---
 
@@ -148,114 +148,94 @@ updated: 2026-04-03
 
 ## Related Concepts
 
-- [[concepts/related-concept]] - How it connects
+- [[related-concept]] — How it connects
 
 ## Sources
 
-- [[daily/2026-04-01.md]] - Initial discovery during project setup
-- [[daily/2026-04-03.md]] - Updated after debugging session
+- [[daily-2026-04-01]] — Initial discovery during project setup
+- [[daily-2026-04-03]] — Updated after debugging session
 ```
 
-### Connection Articles (`knowledge/connections/`)
+### Connection (`type: Connection`)
 
 Cross-cutting synthesis linking 2+ concepts. Created when a conversation reveals a non-obvious relationship.
 
 ```markdown
 ---
-title: "Connection: X and Y"
+type: Connection
 connects:
-  - "concepts/concept-x"
-  - "concepts/concept-y"
+  - "[[concept-x]]"
+  - "[[concept-y]]"
 sources:
-  - "daily/2026-04-04.md"
-created: 2026-04-04
+  - "[[daily-2026-04-04]]"
 updated: 2026-04-04
 ---
 
 # Connection: X and Y
 
 ## The Connection
-
-[What links these concepts]
-
 ## Key Insight
-
-[The non-obvious relationship discovered]
-
 ## Evidence
-
-[Specific examples from conversations]
-
 ## Related Concepts
 
-- [[concepts/concept-x]]
-- [[concepts/concept-y]]
+- [[concept-x]]
+- [[concept-y]]
 ```
 
-### Q&A Articles (`knowledge/qa/`)
+### Q&A (`type: Q&A`)
 
 Filed answers from queries. Every complex question answered by the system can be permanently stored, making future queries smarter.
 
 ```markdown
 ---
-title: "Q: Original Question"
+type: Q&A
 question: "The exact question asked"
 consulted:
-  - "concepts/article-1"
-  - "concepts/article-2"
+  - "[[article-1]]"
+  - "[[article-2]]"
 filed: 2026-04-05
 ---
 
 # Q: Original Question
 
 ## Answer
-
-[The synthesized answer with [[wikilinks]] to sources]
-
 ## Sources Consulted
-
-- [[concepts/article-1]] - Relevant because...
-- [[concepts/article-2]] - Provided context on...
-
 ## Follow-Up Questions
-
-- What about edge case X?
-- How does this change if Y?
 ```
 
 ---
 
 ## Core Operations
 
-### 1. Compile (daily/ -> knowledge/)
+### 1. Compile (daily logs -> knowledge articles)
 
 When processing a daily log:
 
-1. Read the daily log file
-2. Read `knowledge/index.md` to understand current knowledge state
+1. Read the daily log file (`daily-YYYY-MM-DD.md`)
+2. Read `claude-memory-index.md` to understand current knowledge state
 3. Read existing articles that may need updating
 4. For each piece of knowledge found in the log:
-   - If an existing concept article covers this topic: UPDATE it with new information, add the daily log as a source
-   - If it's a new topic: CREATE a new `concepts/` article
-5. If the log reveals a non-obvious connection between 2+ existing concepts: CREATE a `connections/` article
-6. UPDATE `knowledge/index.md` with new/modified entries
-7. APPEND to `knowledge/log.md`
+   - If an existing knowledge article covers this topic: UPDATE it, add the daily log as a source
+   - If it's a new topic: CREATE a new flat `slug.md` with `type: Knowledge Article` frontmatter
+5. If the log reveals a non-obvious connection between 2+ existing concepts: CREATE a flat article with `type: Connection`
+6. UPDATE `claude-memory-index.md` with new/modified entries
 
 **Important guidelines:**
 - A single daily log may touch 3-10 knowledge articles
 - Prefer updating existing articles over creating near-duplicates
-- Use Obsidian-style `[[wikilinks]]` with full relative paths from knowledge/
-- Write in encyclopedia style - factual, concise, self-contained
-- Every article must have YAML frontmatter
+- All output is flat at the vault root — no subdirectories
+- Wikilinks reference the slug only (e.g. `[[supabase-auth]]`, no `concepts/` prefix)
+- Write in encyclopedia style — factual, concise, self-contained
+- Every article must have YAML frontmatter with a `type:` field
 - Every article must link back to its source daily logs
 
 ### 2. Query (Ask the Knowledge Base)
 
-1. Read `knowledge/index.md` (the master catalog)
+1. Read `claude-memory-index.md` (the master catalog)
 2. Based on the question, identify 3-10 relevant articles from the index
 3. Read those articles in full
 4. Synthesize an answer with `[[wikilink]]` citations
-5. If `--file-back` is specified: create a `knowledge/qa/` article and update index.md and log.md
+5. If `--file-back` is specified: create a flat `slug.md` with `type: Q&A` frontmatter and update the index
 
 **Why this works without RAG:** At personal knowledge base scale (50-500 articles), the LLM reading a structured index outperforms cosine similarity. The LLM understands what the question is really asking and selects pages accordingly. Embeddings find similar words; the LLM finds relevant concepts.
 
@@ -277,71 +257,98 @@ Output: a markdown report with severity levels (error, warning, suggestion).
 
 ## Conventions
 
-- **Wikilinks:** Use Obsidian-style `[[path/to/article]]` without `.md` extension
+- **Wikilinks:** Use Obsidian-style `[[slug]]` without `.md` extension and without subfolder prefixes
 - **Writing style:** Encyclopedia-style, factual, third-person where appropriate
-- **Dates:** ISO 8601 (YYYY-MM-DD for dates, full ISO for timestamps in log.md)
-- **File naming:** lowercase, hyphens for spaces (e.g., `supabase-row-level-security.md`)
-- **Frontmatter:** Every article must have YAML frontmatter with at minimum: title, sources, created, updated
-- **Sources:** Always link back to the daily log(s) that contributed to an article
+- **Dates:** ISO 8601 (YYYY-MM-DD for dates)
+- **File naming:** kebab-case (e.g., `supabase-row-level-security.md`); daily logs always `daily-YYYY-MM-DD.md`
+- **Frontmatter:** Every article must have YAML frontmatter with at minimum a `type:` field; sources and updated dates required for knowledge articles
+- **Sources:** Always link back to the daily log(s) that contributed to an article via `[[daily-YYYY-MM-DD]]`
 
 ---
 
 ## Full Project Structure
 
+The repo holds the code; the vault holds the output. They are separate by design — the vault is wherever `MEMORY_OUTPUT_DIR` points (defaulting to the repo root if unset).
+
 ```
-llm-personal-kb/
+claude-memory-compiler/                # The code (this repo)
 |-- .claude/
-|   |-- settings.json                # Hook configuration (auto-activates in Claude Code)
-|-- .gitignore                       # Excludes runtime state, temp files, caches
-|-- AGENTS.md                        # This file - schema + full technical reference
-|-- README.md                        # Concise overview + quick start
-|-- pyproject.toml                   # Dependencies (at root so hooks can find it)
-|-- daily/                           # "Source code" - conversation logs (immutable)
-|-- knowledge/                       # "Executable" - compiled knowledge (LLM-owned)
-|   |-- index.md                     #   Master catalog - THE retrieval mechanism
-|   |-- log.md                       #   Append-only build log
-|   |-- concepts/                    #   Atomic knowledge articles
-|   |-- connections/                 #   Cross-cutting insights linking 2+ concepts
-|   |-- qa/                          #   Filed query answers (compounding knowledge)
-|-- scripts/                         # CLI tools
-|   |-- compile.py                   #   Compile daily logs -> knowledge articles
-|   |-- query.py                     #   Ask questions (index-guided, no RAG)
-|   |-- lint.py                      #   7 health checks
-|   |-- flush.py                     #   Extract memories from conversations (background)
-|   |-- config.py                    #   Path constants
-|   |-- utils.py                     #   Shared helpers
-|-- hooks/                           # Claude Code hooks
-|   |-- session-start.py             #   Injects knowledge into every session
-|   |-- session-end.py               #   Extracts conversation -> daily log
-|   |-- pre-compact.py               #   Safety net: captures context before compaction
-|-- reports/                         # Lint reports (gitignored)
+|   |-- settings.json                  # Project-local hooks (relative paths, portable)
+|-- .gitignore
+|-- AGENTS.md                          # This file - schema + full technical reference
+|-- README.md
+|-- pyproject.toml
+|-- scripts/
+|   |-- compile.py                     # Daily logs -> knowledge articles
+|   |-- query.py                       # Ask questions (index-guided, no RAG)
+|   |-- lint.py                        # 7 health checks
+|   |-- flush.py                       # Extract memories from conversations (background)
+|   |-- config.py                      # Path constants + MEMORY_OUTPUT_DIR resolution
+|   |-- utils.py                       # Shared helpers
+|   |-- state.json                     # Tracking (compile hashes, costs) - gitignored
+|   |-- flush.log                      # Background process log - gitignored
+|-- hooks/
+|   |-- session-start.py               # Injects knowledge index into new sessions
+|   |-- session-end.py                 # Extracts transcript -> spawns flush.py
+|   |-- pre-compact.py                 # Safety net before auto-compaction
+|-- reports/                           # Lint reports (gitignored)
+
+$MEMORY_OUTPUT_DIR/                    # The vault (separate, e.g. ~/Tolaria-vault/)
+|-- daily-YYYY-MM-DD.md                # Daily logs - one per day, type: Daily Log
+|-- claude-memory-index.md             # Master catalog of knowledge articles
+|-- supabase-auth.md                   # Knowledge articles (type: Knowledge Article)
+|-- auth-and-webhooks.md               # Connections (type: Connection)
+|-- how-to-handle-redirects.md         # Q&A (type: Q&A)
 ```
+
+Operational state (`state.json`, `flush.log`, temp context files) always lives in the repo's `scripts/` directory, regardless of `MEMORY_OUTPUT_DIR`. Only knowledge output respects the env var.
 
 ---
 
 ## Hook System (Automatic Capture)
 
-Hooks are configured in `.claude/settings.json` and fire automatically when you use Claude Code in this project.
+Hooks fire automatically when Claude Code starts/ends/compacts. There are two valid scopes for hook configuration:
 
-### `.claude/settings.json` Format
+### Project-Local Hooks: `.claude/settings.json`
+
+Fires only when Claude Code is opened *inside this repo*. Useful for testing or for users who only want to capture sessions in this project. Uses relative paths so the file is portable across users:
 
 ```json
 {
   "hooks": {
     "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/session-start.py", "timeout": 15 }] }],
-    "PreCompact": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/pre-compact.py", "timeout": 10 }] }],
-    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/session-end.py", "timeout": 10 }] }]
+    "PreCompact":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/pre-compact.py",   "timeout": 10 }] }],
+    "SessionEnd":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/session-end.py",   "timeout": 10 }] }]
   }
 }
 ```
 
-Commands use simple relative paths from the project root. Empty `matcher` catches all events.
+### Global Hooks: `~/.claude/settings.json` (Recommended for Daily Use)
+
+Fires for **every** Claude Code session in any project. Requires absolute paths and `MEMORY_OUTPUT_DIR` so output goes to a stable vault location:
+
+```json
+{
+  "env": {
+    "MEMORY_OUTPUT_DIR": "~/path/to/your/vault"
+  },
+  "hooks": {
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run --directory /abs/path/to/claude-memory-compiler python /abs/path/to/claude-memory-compiler/hooks/session-start.py", "timeout": 15 }] }],
+    "PreCompact":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run --directory /abs/path/to/claude-memory-compiler python /abs/path/to/claude-memory-compiler/hooks/pre-compact.py",   "timeout": 10 }] }],
+    "SessionEnd":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run --directory /abs/path/to/claude-memory-compiler python /abs/path/to/claude-memory-compiler/hooks/session-end.py",   "timeout": 10 }] }]
+  }
+}
+```
+
+- `uv run --directory <repo>` keeps Python deps isolated to the project's `.venv` — nothing pollutes global Python
+- `MEMORY_OUTPUT_DIR` redirects daily logs and knowledge articles to the chosen vault. If unset, output stays in the repo. Tilde expansion is handled by the scripts.
+- Empty `matcher` catches all events for that hook type.
 
 ### Hook Details
 
 **`session-start.py`** (SessionStart)
 - Pure local I/O, no API calls, runs in under 1 second
-- Reads `knowledge/index.md` and the most recent daily log
+- Reads `claude-memory-index.md` and the most recent daily log from the vault
 - Outputs JSON to stdout: `{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "..."}}`
 - Claude sees the knowledge base index at the start of every session
 - Max context: 20,000 characters
@@ -374,7 +381,7 @@ This ensures flush.py survives after Claude Code's hook process exits.
 3. Skips if context is empty or if same session was flushed within 60 seconds (deduplication)
 4. Calls Claude Agent SDK (`query()` with `allowed_tools=[]`, `max_turns=2`)
 5. Claude decides what's worth saving - returns structured bullet points or `FLUSH_OK`
-6. Appends result to `daily/YYYY-MM-DD.md`
+6. Appends result to `$VAULT/daily-YYYY-MM-DD.md`, routing Session entries under `## Sessions` and FLUSH_OK entries under `## Memory Maintenance`
 7. Cleans up temp context file
 8. **End-of-day auto-compilation:** If it's past 6 PM local time (`COMPILE_AFTER_HOUR = 18`) and today's daily log has changed since its last compilation (hash comparison against `state.json`), spawns `compile.py` as another detached background process. This means compilation happens automatically once a day without needing a cron job or manual trigger.
 
@@ -422,7 +429,7 @@ async for message in query(
 ```bash
 uv run python scripts/compile.py              # compile new/changed only
 uv run python scripts/compile.py --all        # force recompile everything
-uv run python scripts/compile.py --file daily/2026-04-01.md
+uv run python scripts/compile.py --file daily-2026-04-01.md
 uv run python scripts/compile.py --dry-run
 ```
 
@@ -438,7 +445,7 @@ uv run python scripts/query.py "What auth patterns do I use?"
 uv run python scripts/query.py "What's my error handling strategy?" --file-back
 ```
 
-With `--file-back`, creates a Q&A article in `knowledge/qa/` and updates the index and log. This is the compounding loop - every question makes the KB smarter.
+With `--file-back`, creates a flat Q&A article (`type: Q&A`) at the vault root and updates `claude-memory-index.md`. This is the compounding loop — every question makes the KB smarter.
 
 ### lint.py - Health Checks
 
@@ -507,11 +514,11 @@ No API key needed - uses Claude Code's built-in credentials at `~/.claude/.crede
 
 ### Additional Article Types
 
-Add directories like `people/`, `projects/`, `tools/` to `knowledge/`. Define the article format in this file (AGENTS.md) and update `utils.py`'s `list_wiki_articles()` to include them.
+Add new types via the `type:` frontmatter field (e.g. `type: Person`, `type: Project`, `type: Tool`). Define the article format in this file (AGENTS.md) and add the new type string to `_KNOWLEDGE_TYPES` in `scripts/utils.py` so the new articles are discoverable by lint, query, and compile. No subdirectories to create — files stay flat at the vault root.
 
-### Obsidian Integration
+### Obsidian / Tolaria Integration
 
-The knowledge base is pure markdown with `[[wikilinks]]` - works natively in Obsidian. Point a vault at `knowledge/` for graph view, backlinks, and search.
+The output is pure markdown with `[[wikilinks]]` and `type:` frontmatter — works natively in both Obsidian and Tolaria vaults. Set `MEMORY_OUTPUT_DIR` to your vault root and the daily logs and knowledge articles render as native notes alongside whatever else lives in the vault.
 
 ### Scaling Beyond Index-Guided Retrieval
 

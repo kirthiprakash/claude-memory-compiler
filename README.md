@@ -23,7 +23,7 @@ From there, your conversations start accumulating. After 6 PM local time, the ne
 
 ```
 Conversation -> SessionEnd/PreCompact hooks -> flush.py extracts knowledge
-    -> daily/YYYY-MM-DD.md -> compile.py -> knowledge/concepts/, connections/, qa/
+    -> daily-YYYY-MM-DD.md -> compile.py -> flat knowledge articles + index
         -> SessionStart hook injects index into next session -> cycle repeats
 ```
 
@@ -32,6 +32,36 @@ Conversation -> SessionEnd/PreCompact hooks -> flush.py extracts knowledge
 - **compile.py** turns daily logs into organized concept articles with cross-references (triggered automatically or run manually)
 - **query.py** answers questions using index-guided retrieval (no RAG needed at personal scale)
 - **lint.py** runs 7 health checks (broken links, orphans, contradictions, staleness)
+
+Output is structured as flat markdown files identified by `type:` frontmatter (`Daily Log`, `Knowledge Article`, `Connection`, `Q&A`), so it drops cleanly into a Tolaria or Obsidian vault.
+
+## Global Setup (Capture All Sessions, Write to a Vault)
+
+The Quick Start above sets up project-local hooks that only fire when Claude Code is opened *inside this repo*. To capture every Claude Code session across all projects and route output to an external knowledge vault:
+
+1. **Configure global hooks** in `~/.claude/settings.json` with absolute paths so they fire everywhere:
+
+   ```json
+   {
+     "env": {
+       "MEMORY_OUTPUT_DIR": "~/path/to/your/vault"
+     },
+     "hooks": {
+       "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run --directory /abs/path/to/claude-memory-compiler python /abs/path/to/claude-memory-compiler/hooks/session-start.py", "timeout": 15 }] }],
+       "PreCompact":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run --directory /abs/path/to/claude-memory-compiler python /abs/path/to/claude-memory-compiler/hooks/pre-compact.py",   "timeout": 10 }] }],
+       "SessionEnd":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run --directory /abs/path/to/claude-memory-compiler python /abs/path/to/claude-memory-compiler/hooks/session-end.py",   "timeout": 10 }] }]
+     }
+   }
+   ```
+
+2. **`MEMORY_OUTPUT_DIR`** redirects daily logs and knowledge articles to your chosen folder. If unset, output stays in this repo's directory. Useful values:
+   - A Tolaria vault (`~/workspace/documents/my-vault`) — files render as native notes
+   - An Obsidian vault (`~/Documents/Obsidian/MyVault`) — same idea, picked up by Obsidian
+   - Any plain folder if you just want them collected somewhere outside the repo
+
+3. **`uv run --directory <repo>`** points uv at this project's `pyproject.toml` and `.venv`, so dependencies stay isolated to the project and don't pollute your global Python environment.
+
+Operational state (`flush.log`, `state.json`, temp context files) always stays in the repo — only your knowledge output respects `MEMORY_OUTPUT_DIR`.
 
 ## Key Commands
 

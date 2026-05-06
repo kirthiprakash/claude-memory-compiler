@@ -24,8 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DAILY_DIR = ROOT / "daily"
 SCRIPTS_DIR = ROOT / "scripts"
+_OUTPUT_BASE = Path(os.environ["MEMORY_OUTPUT_DIR"]).expanduser() if "MEMORY_OUTPUT_DIR" in os.environ else ROOT
 STATE_FILE = SCRIPTS_DIR / "last-flush.json"
 LOG_FILE = SCRIPTS_DIR / "flush.log"
 
@@ -54,19 +54,29 @@ def save_flush_state(state: dict) -> None:
 
 
 def append_to_daily_log(content: str, section: str = "Session") -> None:
-    """Append content to today's daily log."""
+    """Append content to today's daily log, routed by section."""
     today = datetime.now(timezone.utc).astimezone()
-    log_path = DAILY_DIR / f"{today.strftime('%Y-%m-%d')}.md"
+    date_str = today.strftime("%Y-%m-%d")
+    log_path = _OUTPUT_BASE / f"daily-{date_str}.md"
 
     if not log_path.exists():
-        DAILY_DIR.mkdir(parents=True, exist_ok=True)
+        _OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
         log_path.write_text(
-            f"# Daily Log: {today.strftime('%Y-%m-%d')}\n\n## Sessions\n\n## Memory Maintenance\n\n",
+            f"---\ntype: Daily Log\ndate: {date_str}\n---\n# Daily Log: {date_str}\n\n## Sessions\n\n## Memory Maintenance\n\n",
             encoding="utf-8",
         )
 
     time_str = today.strftime("%H:%M")
     entry = f"### {section} ({time_str})\n\n{content}\n\n"
+
+    # Route Session entries under "## Sessions" (insert before "## Memory Maintenance");
+    # everything else (Memory Flush) appends to the end under "## Memory Maintenance".
+    if section == "Session":
+        existing = log_path.read_text(encoding="utf-8")
+        idx = existing.find("## Memory Maintenance")
+        if idx != -1:
+            log_path.write_text(existing[:idx] + entry + existing[idx:], encoding="utf-8")
+            return
 
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(entry)
@@ -151,7 +161,7 @@ def maybe_trigger_compilation() -> None:
         return
 
     # Check if today's log has already been compiled
-    today_log = f"{now.strftime('%Y-%m-%d')}.md"
+    today_log = f"daily-{now.strftime('%Y-%m-%d')}.md"
     compile_state_file = SCRIPTS_DIR / "state.json"
     if compile_state_file.exists():
         try:
@@ -160,7 +170,7 @@ def maybe_trigger_compilation() -> None:
             if today_log in ingested:
                 # Already compiled today - check if the log has changed since
                 from hashlib import sha256
-                log_path = DAILY_DIR / today_log
+                log_path = _OUTPUT_BASE / today_log
                 if log_path.exists():
                     current_hash = sha256(log_path.read_bytes()).hexdigest()[:16]
                     if ingested[today_log].get("hash") == current_hash:

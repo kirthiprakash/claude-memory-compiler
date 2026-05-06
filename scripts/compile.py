@@ -7,7 +7,7 @@ organized knowledge articles (the executable).
 Usage:
     uv run python compile.py                    # compile new/changed logs only
     uv run python compile.py --all              # force recompile everything
-    uv run python compile.py --file daily/2026-04-01.md  # compile a specific log
+    uv run python compile.py --file daily-2026-04-01.md  # compile a specific log
     uv run python compile.py --dry-run          # show what would be compiled
 """
 
@@ -18,7 +18,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, now_iso
+from config import AGENTS_FILE, VAULT_DIR, now_iso
 from utils import (
     file_hash,
     list_raw_files,
@@ -53,8 +53,7 @@ async def compile_daily_log(log_path: Path, state: dict) -> float:
     existing_articles_context = ""
     existing = {}
     for article_path in list_wiki_articles():
-        rel = article_path.relative_to(KNOWLEDGE_DIR)
-        existing[str(rel)] = article_path.read_text(encoding="utf-8")
+        existing[article_path.name] = article_path.read_text(encoding="utf-8")
 
     if existing:
         parts = []
@@ -65,17 +64,17 @@ async def compile_daily_log(log_path: Path, state: dict) -> float:
     timestamp = now_iso()
 
     prompt = f"""You are a knowledge compiler. Your job is to read a daily conversation log
-and extract knowledge into structured wiki articles.
+and extract knowledge into structured Tolaria vault notes.
 
 ## Schema (AGENTS.md)
 
 {schema}
 
-## Current Wiki Index
+## Current Knowledge Index
 
 {wiki_index}
 
-## Existing Wiki Articles
+## Existing Knowledge Articles
 
 {existing_articles_context if existing_articles_context else "(No existing articles yet)"}
 
@@ -87,43 +86,42 @@ and extract knowledge into structured wiki articles.
 
 ## Your Task
 
-Read the daily log above and compile it into wiki articles following the schema exactly.
+Read the daily log above and compile it into knowledge articles in the Tolaria vault.
 
 ### Rules:
 
-1. **Extract key concepts** - Identify 3-7 distinct concepts worth their own article
-2. **Create concept articles** in `knowledge/concepts/` - One .md file per concept
-   - Use the exact article format from AGENTS.md (YAML frontmatter + sections)
-   - Include `sources:` in frontmatter pointing to the daily log file
-   - Use `[[concepts/slug]]` wikilinks to link to related concepts
-   - Write in encyclopedia style - neutral, comprehensive
-3. **Create connection articles** in `knowledge/connections/` if this log reveals non-obvious
-   relationships between 2+ existing concepts
-4. **Update existing articles** if this log adds new information to concepts already in the wiki
-   - Read the existing article, add the new information, add the source to frontmatter
-5. **Update knowledge/index.md** - Add new entries to the table
-   - Each entry: `| [[path/slug]] | One-line summary | source-file | {timestamp[:10]} |`
-6. **Append to knowledge/log.md** - Add a timestamped entry:
-   ```
-   ## [{timestamp}] compile | {log_path.name}
-   - Source: daily/{log_path.name}
-   - Articles created: [[concepts/x]], [[concepts/y]]
-   - Articles updated: [[concepts/z]] (if any)
-   ```
+1. **Extract key concepts** — Identify 3-7 distinct concepts worth their own article.
 
-### File paths:
-- Write concept articles to: {CONCEPTS_DIR}
-- Write connection articles to: {CONNECTIONS_DIR}
-- Update index at: {KNOWLEDGE_DIR / 'index.md'}
-- Append log at: {KNOWLEDGE_DIR / 'log.md'}
+2. **Create knowledge articles** — One flat `.md` file per concept, written directly to: {VAULT_DIR}
+   - Filename: kebab-case, e.g. `claude-code-hooks.md`
+   - Use this exact frontmatter format:
+     ```yaml
+     ---
+     type: Knowledge Article
+     tags: [tag1, tag2]
+     sources:
+       - "[[{log_path.stem}]]"
+     updated: {timestamp[:10]}
+     ---
+     ```
+   - Write in encyclopedia style: neutral, comprehensive, H1 title then sections
+   - Use `[[slug]]` wikilinks to link to related articles (no subfolder prefix)
+
+3. **Create connection articles** for non-obvious relationships between 2+ concepts — same format but `type: Connection`.
+
+4. **Update existing articles** if this log adds new information — read, edit, add source to frontmatter.
+
+5. **Update the index** at {VAULT_DIR / 'claude-memory-index.md'} — add/update entries:
+   ```
+   | [[slug]] | One-line summary | {log_path.stem} | {timestamp[:10]} |
+   ```
 
 ### Quality standards:
-- Every article must have complete YAML frontmatter
-- Every article must link to at least 2 other articles via [[wikilinks]]
-- Key Points section should have 3-5 bullet points
-- Details section should have 2+ paragraphs
-- Related Concepts section should have 2+ entries
-- Sources section should cite the daily log with specific claims extracted
+- Every article must have complete YAML frontmatter with `type:` field
+- Articles must link to at least 2 others via [[wikilinks]]
+- Key Points section: 3-5 bullets
+- Details section: 2+ paragraphs
+- Sources section: cite the daily log with specific claims extracted
 """
 
     cost = 0.0
@@ -176,7 +174,7 @@ def main():
     if args.file:
         target = Path(args.file)
         if not target.is_absolute():
-            target = DAILY_DIR / target.name
+            target = VAULT_DIR / target.name
         if not target.exists():
             # Try resolving relative to project root
             target = ROOT_DIR / args.file

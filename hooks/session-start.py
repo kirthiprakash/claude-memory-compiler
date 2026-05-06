@@ -17,15 +17,14 @@ Configure in .claude/settings.json:
 """
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Paths relative to project root
 ROOT = Path(__file__).resolve().parent.parent
-KNOWLEDGE_DIR = ROOT / "knowledge"
-DAILY_DIR = ROOT / "daily"
-INDEX_FILE = KNOWLEDGE_DIR / "index.md"
+_VAULT = Path(os.environ["MEMORY_OUTPUT_DIR"]).expanduser() if "MEMORY_OUTPUT_DIR" in os.environ else ROOT
+INDEX_FILE = _VAULT / "claude-memory-index.md"
 
 MAX_CONTEXT_CHARS = 20_000
 MAX_LOG_LINES = 30
@@ -37,10 +36,9 @@ def get_recent_log() -> str:
 
     for offset in range(2):
         date = today - timedelta(days=offset)
-        log_path = DAILY_DIR / f"{date.strftime('%Y-%m-%d')}.md"
+        log_path = _VAULT / f"daily-{date.strftime('%Y-%m-%d')}.md"
         if log_path.exists():
             lines = log_path.read_text(encoding="utf-8").splitlines()
-            # Return last N lines to keep context small
             recent = lines[-MAX_LOG_LINES:] if len(lines) > MAX_LOG_LINES else lines
             return "\n".join(recent)
 

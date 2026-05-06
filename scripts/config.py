@@ -1,23 +1,28 @@
 """Path constants and configuration for the personal knowledge base."""
 
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
 # ── Paths ──────────────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DAILY_DIR = ROOT_DIR / "daily"
-KNOWLEDGE_DIR = ROOT_DIR / "knowledge"
-CONCEPTS_DIR = KNOWLEDGE_DIR / "concepts"
-CONNECTIONS_DIR = KNOWLEDGE_DIR / "connections"
-QA_DIR = KNOWLEDGE_DIR / "qa"
-REPORTS_DIR = ROOT_DIR / "reports"
 SCRIPTS_DIR = ROOT_DIR / "scripts"
 HOOKS_DIR = ROOT_DIR / "hooks"
 AGENTS_FILE = ROOT_DIR / "AGENTS.md"
-
-INDEX_FILE = KNOWLEDGE_DIR / "index.md"
-LOG_FILE = KNOWLEDGE_DIR / "log.md"
+REPORTS_DIR = ROOT_DIR / "reports"
 STATE_FILE = SCRIPTS_DIR / "state.json"
+LOG_FILE = SCRIPTS_DIR / "flush.log"
+
+# Tolaria vault — flat structure, all notes at vault root
+VAULT_DIR = Path(os.environ["MEMORY_OUTPUT_DIR"]).expanduser() if "MEMORY_OUTPUT_DIR" in os.environ else ROOT_DIR
+INDEX_FILE = VAULT_DIR / "claude-memory-index.md"
+
+# Aliases kept for compatibility — all point to vault root (no subdirectories)
+KNOWLEDGE_DIR = VAULT_DIR
+DAILY_DIR = VAULT_DIR
+CONCEPTS_DIR = VAULT_DIR
+CONNECTIONS_DIR = VAULT_DIR
+QA_DIR = VAULT_DIR
 
 # ── Timezone ───────────────────────────────────────────────────────────
 TIMEZONE = "America/Chicago"

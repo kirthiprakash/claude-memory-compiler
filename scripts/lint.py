@@ -15,7 +15,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from config import KNOWLEDGE_DIR, REPORTS_DIR, now_iso, today_iso
+from config import REPORTS_DIR, VAULT_DIR, now_iso, today_iso
 from utils import (
     count_inbound_links,
     extract_wikilinks,
@@ -37,15 +37,14 @@ def check_broken_links() -> list[dict]:
     issues = []
     for article in list_wiki_articles():
         content = article.read_text(encoding="utf-8")
-        rel = article.relative_to(KNOWLEDGE_DIR)
         for link in extract_wikilinks(content):
-            if link.startswith("daily/"):
+            if link.startswith("daily-"):
                 continue  # daily log references are valid
             if not wiki_article_exists(link):
                 issues.append({
                     "severity": "error",
                     "check": "broken_link",
-                    "file": str(rel),
+                    "file": article.name,
                     "detail": f"Broken link: [[{link}]] - target does not exist",
                 })
     return issues
@@ -55,14 +54,13 @@ def check_orphan_pages() -> list[dict]:
     """Check for articles with zero inbound links."""
     issues = []
     for article in list_wiki_articles():
-        rel = article.relative_to(KNOWLEDGE_DIR)
-        link_target = str(rel).replace(".md", "").replace("\\", "/")
+        link_target = article.stem
         inbound = count_inbound_links(link_target)
         if inbound == 0:
             issues.append({
                 "severity": "warning",
                 "check": "orphan_page",
-                "file": str(rel),
+                "file": article.name,
                 "detail": f"Orphan page: no other articles link to [[{link_target}]]",
             })
     return issues
@@ -78,7 +76,7 @@ def check_orphan_sources() -> list[dict]:
             issues.append({
                 "severity": "warning",
                 "check": "orphan_source",
-                "file": f"daily/{log_path.name}",
+                "file": log_path.name,
                 "detail": f"Uncompiled daily log: {log_path.name} has not been ingested",
             })
     return issues
@@ -98,7 +96,7 @@ def check_stale_articles() -> list[dict]:
                 issues.append({
                     "severity": "warning",
                     "check": "stale_article",
-                    "file": f"daily/{rel}",
+                    "file": rel,
                     "detail": f"Stale: {rel} has changed since last compilation",
                 })
     return issues
@@ -109,20 +107,18 @@ def check_missing_backlinks() -> list[dict]:
     issues = []
     for article in list_wiki_articles():
         content = article.read_text(encoding="utf-8")
-        rel = article.relative_to(KNOWLEDGE_DIR)
-        source_link = str(rel).replace(".md", "").replace("\\", "/")
+        source_link = article.stem
 
         for link in extract_wikilinks(content):
-            if link.startswith("daily/"):
+            if link.startswith("daily-"):
                 continue
-            target_path = KNOWLEDGE_DIR / f"{link}.md"
+            target_path = VAULT_DIR / f"{link}.md"
             if target_path.exists():
-                target_content = target_path.read_text(encoding="utf-8")
-                if f"[[{source_link}]]" not in target_content:
+                if f"[[{source_link}]]" not in target_path.read_text(encoding="utf-8"):
                     issues.append({
                         "severity": "suggestion",
                         "check": "missing_backlink",
-                        "file": str(rel),
+                        "file": article.name,
                         "detail": f"[[{source_link}]] links to [[{link}]] but not vice versa",
                         "auto_fixable": True,
                     })
@@ -135,11 +131,10 @@ def check_sparse_articles() -> list[dict]:
     for article in list_wiki_articles():
         word_count = get_article_word_count(article)
         if word_count < 200:
-            rel = article.relative_to(KNOWLEDGE_DIR)
             issues.append({
                 "severity": "suggestion",
                 "check": "sparse_article",
-                "file": str(rel),
+                "file": article.name,
                 "detail": f"Sparse article: {word_count} words (minimum recommended: 200)",
             })
     return issues

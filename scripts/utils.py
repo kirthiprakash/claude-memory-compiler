@@ -6,14 +6,9 @@ import re
 from pathlib import Path
 
 from config import (
-    CONCEPTS_DIR,
-    CONNECTIONS_DIR,
-    DAILY_DIR,
     INDEX_FILE,
-    KNOWLEDGE_DIR,
-    LOG_FILE,
-    QA_DIR,
     STATE_FILE,
+    VAULT_DIR,
 )
 
 
@@ -58,8 +53,24 @@ def extract_wikilinks(content: str) -> list[str]:
 
 def wiki_article_exists(link: str) -> bool:
     """Check if a wikilinked article exists on disk."""
-    path = KNOWLEDGE_DIR / f"{link}.md"
-    return path.exists()
+    return (VAULT_DIR / f"{link}.md").exists()
+
+
+def _frontmatter_type(path: Path) -> str:
+    """Extract the type: field from YAML frontmatter, or empty string."""
+    content = path.read_text(encoding="utf-8")
+    if not content.startswith("---"):
+        return ""
+    end = content.find("---", 3)
+    if end == -1:
+        return ""
+    for line in content[3:end].splitlines():
+        if line.startswith("type:"):
+            return line.split(":", 1)[1].strip().strip("\"'")
+    return ""
+
+
+_KNOWLEDGE_TYPES = {"Knowledge Article", "Connection", "Q&A"}
 
 
 # ── Wiki content helpers ──────────────────────────────────────────────
@@ -68,38 +79,30 @@ def read_wiki_index() -> str:
     """Read the knowledge base index file."""
     if INDEX_FILE.exists():
         return INDEX_FILE.read_text(encoding="utf-8")
-    return "# Knowledge Base Index\n\n| Article | Summary | Compiled From | Updated |\n|---------|---------|---------------|---------|"
+    return "# Claude Memory Index\n\n| Article | Summary | Compiled From | Updated |\n|---------|---------|---------------|---------|"
 
 
 def read_all_wiki_content() -> str:
     """Read index + all wiki articles into a single string for context."""
     parts = [f"## INDEX\n\n{read_wiki_index()}"]
-
-    for subdir in [CONCEPTS_DIR, CONNECTIONS_DIR, QA_DIR]:
-        if not subdir.exists():
-            continue
-        for md_file in sorted(subdir.glob("*.md")):
-            rel = md_file.relative_to(KNOWLEDGE_DIR)
-            content = md_file.read_text(encoding="utf-8")
-            parts.append(f"## {rel}\n\n{content}")
-
+    for article_path in list_wiki_articles():
+        content = article_path.read_text(encoding="utf-8")
+        parts.append(f"## {article_path.name}\n\n{content}")
     return "\n\n---\n\n".join(parts)
 
 
 def list_wiki_articles() -> list[Path]:
-    """List all wiki article files."""
-    articles = []
-    for subdir in [CONCEPTS_DIR, CONNECTIONS_DIR, QA_DIR]:
-        if subdir.exists():
-            articles.extend(sorted(subdir.glob("*.md")))
-    return articles
+    """List knowledge articles in the vault (identified by type: frontmatter)."""
+    if not VAULT_DIR.exists():
+        return []
+    return [f for f in sorted(VAULT_DIR.glob("*.md")) if _frontmatter_type(f) in _KNOWLEDGE_TYPES]
 
 
 def list_raw_files() -> list[Path]:
-    """List all daily log files."""
-    if not DAILY_DIR.exists():
+    """List all daily log files (named daily-YYYY-MM-DD.md at vault root)."""
+    if not VAULT_DIR.exists():
         return []
-    return sorted(DAILY_DIR.glob("*.md"))
+    return sorted(VAULT_DIR.glob("daily-*.md"))
 
 
 # ── Index helpers ─────────────────────────────────────────────────────
@@ -110,8 +113,7 @@ def count_inbound_links(target: str, exclude_file: Path | None = None) -> int:
     for article in list_wiki_articles():
         if article == exclude_file:
             continue
-        content = article.read_text(encoding="utf-8")
-        if f"[[{target}]]" in content:
+        if f"[[{target}]]" in article.read_text(encoding="utf-8"):
             count += 1
     return count
 

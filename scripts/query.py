@@ -16,7 +16,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from config import KNOWLEDGE_DIR, QA_DIR, now_iso
+from config import VAULT_DIR, now_iso
 from utils import load_state, read_all_wiki_content, save_state
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -46,16 +46,18 @@ async def run_query(question: str, file_back: bool = False) -> str:
 ## File Back Instructions
 
 After answering, do the following:
-1. Create a Q&A article at {QA_DIR}/ with the filename being a slugified version
-   of the question (e.g., knowledge/qa/how-to-handle-auth-redirects.md)
-2. Use the Q&A article format from the schema (frontmatter with title, question,
-   consulted articles, filed date)
-3. Update {KNOWLEDGE_DIR / 'index.md'} with a new row for this Q&A article
-4. Append to {KNOWLEDGE_DIR / 'log.md'}:
-   ## [{timestamp}] query (filed) | question summary
-   - Question: {question}
-   - Consulted: [[list of articles read]]
-   - Filed to: [[qa/article-name]]
+1. Create a Q&A article directly in the vault at {VAULT_DIR}/ — kebab-case filename,
+   e.g. `how-to-handle-auth-redirects.md`
+2. Use this frontmatter:
+   ```yaml
+   ---
+   type: Q&A
+   question: "{question}"
+   consulted: ["[[article-slug]]"]
+   filed: {timestamp[:10]}
+   ---
+   ```
+3. Update {VAULT_DIR / 'claude-memory-index.md'} with a new row for this Q&A article
 """
 
     prompt = f"""You are a knowledge base query engine. Answer the user's question by
@@ -130,8 +132,7 @@ def main():
 
     if args.file_back:
         print("\n" + "-" * 60)
-        qa_count = len(list(QA_DIR.glob("*.md"))) if QA_DIR.exists() else 0
-        print(f"Answer filed to knowledge/qa/ ({qa_count} Q&A articles total)")
+        print("Answer filed to vault.")
 
 
 if __name__ == "__main__":

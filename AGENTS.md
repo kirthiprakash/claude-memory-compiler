@@ -53,6 +53,8 @@ date: YYYY-MM-DD
 
 ### Session (HH:MM)
 
+**Resume:** `claude --resume <session-id>`
+
 **Context:** What the user was working on.
 
 **Key Exchanges:**
@@ -67,6 +69,10 @@ date: YYYY-MM-DD
 
 **Action Items:**
 - [ ] Follow up on X
+
+**References:**
+- https://docs.example.com/some-page — official spec for X
+- owner/repo — example plugin layout we adapted from
 
 ## Memory Maintenance
 

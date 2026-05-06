@@ -53,7 +53,24 @@ def save_flush_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
 
 
-def append_to_daily_log(content: str, section: str = "Session") -> None:
+def _resume_line(session_id: str | None) -> str:
+    """Format a resume hint line for the given session_id, or empty if unavailable.
+
+    Copilot session ids are prefixed with "copilot-" by the Copilot hook so we
+    can recover the underlying UUID and emit the right CLI for resumption.
+    """
+    if not session_id or session_id == "unknown":
+        return ""
+    if session_id.startswith("copilot-"):
+        raw = session_id[len("copilot-"):]
+        return f"**Resume:** `copilot --resume {raw}`\n\n"
+    return f"**Resume:** `claude --resume {session_id}`\n\n"
+
+
+_MAINT_MARKER = "<!-- MEMORY_MAINTENANCE_BOUNDARY -->"
+
+
+def append_to_daily_log(content: str, section: str = "Session", session_id: str | None = None) -> None:
     """Append content to today's daily log, routed by section."""
     today = datetime.now(timezone.utc).astimezone()
     date_str = today.strftime("%Y-%m-%d")
@@ -62,18 +79,23 @@ def append_to_daily_log(content: str, section: str = "Session") -> None:
     if not log_path.exists():
         _OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
         log_path.write_text(
-            f"---\ntype: Daily Log\ndate: {date_str}\n---\n# Daily Log: {date_str}\n\n## Sessions\n\n## Memory Maintenance\n\n",
+            f"---\ntype: Daily Log\ndate: {date_str}\n---\n# Daily Log: {date_str}\n\n## Sessions\n\n{_MAINT_MARKER}\n## Memory Maintenance\n\n",
             encoding="utf-8",
         )
 
     time_str = today.strftime("%H:%M")
-    entry = f"### {section} ({time_str})\n\n{content}\n\n"
+    resume_line = _resume_line(session_id) if section == "Session" else ""
+    entry = f"### {section} ({time_str})\n\n{resume_line}{content}\n\n"
 
-    # Route Session entries under "## Sessions" (insert before "## Memory Maintenance");
-    # everything else (Memory Flush) appends to the end under "## Memory Maintenance".
+    # Route Session entries under "## Sessions" (insert before the maintenance marker);
+    # Memory Flush entries append to the end under "## Memory Maintenance".
+    # The marker is an invisible HTML comment so it can't collide with content text.
     if section == "Session":
         existing = log_path.read_text(encoding="utf-8")
-        idx = existing.find("## Memory Maintenance")
+        idx = existing.find(_MAINT_MARKER)
+        if idx == -1:
+            # Legacy file (pre-marker) — fall back to the heading
+            idx = existing.find("## Memory Maintenance")
         if idx != -1:
             log_path.write_text(existing[:idx] + entry + existing[idx:], encoding="utf-8")
             return
@@ -111,6 +133,11 @@ Format your response as a structured daily log entry with these sections:
 
 **Action Items:**
 - [Follow-ups or TODOs mentioned]
+
+**References:**
+- [Any external resources discovered during the session that may be useful later: documentation URLs, GitHub repos (owner/repo), API references, blog posts, official spec links, package names, internal wiki/Confluence links, etc.]
+- One bullet per reference. Format: `<URL or owner/repo or identifier> — short note about why it's useful`
+- Include only references that were actually consulted or mentioned in the conversation. Do not invent or pad. Skip URLs that are just transient (e.g., a fetched API response that isn't documentation).
 
 Skip anything that is:
 - Routine tool calls or file reads
@@ -213,52 +240,73 @@ def main():
         logging.error("Context file not found: %s", context_file)
         return
 
-    # Deduplication: skip if same session was flushed within 60 seconds
-    state = load_flush_state()
-    if (
-        state.get("session_id") == session_id
-        and time.time() - state.get("timestamp", 0) < 60
-    ):
-        logging.info("Skipping duplicate flush for session %s", session_id)
+    # Race-resistant dedup: when the same session-end fires multiple times
+    # (e.g., both the global ~/.claude/settings.json and the project-local
+    # .claude/settings.json have hooks), two flush.py instances start nearly
+    # simultaneously. The old timestamp-based check let both pass before either
+    # wrote state. Use O_CREAT|O_EXCL to acquire an atomic lock; whoever gets
+    # there second sees FileExistsError and bails out cleanly.
+    lock_dir = SCRIPTS_DIR / ".flush-locks"
+    lock_dir.mkdir(exist_ok=True)
+    lock_path = lock_dir / f"{session_id}.lock"
+    LOCK_STALE_SECONDS = 300
+
+    if lock_path.exists() and (time.time() - lock_path.stat().st_mtime) > LOCK_STALE_SECONDS:
+        logging.warning("Stale lock for %s, removing", session_id)
+        lock_path.unlink(missing_ok=True)
+
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f"{os.getpid()}\n{time.time()}\n".encode())
+        os.close(fd)
+    except FileExistsError:
+        logging.info("Skipping duplicate flush for session %s (lock held)", session_id)
         context_file.unlink(missing_ok=True)
         return
 
-    # Read pre-extracted context
-    context = context_file.read_text(encoding="utf-8").strip()
-    if not context:
-        logging.info("Context file is empty, skipping")
+    try:
+        # Read pre-extracted context
+        context = context_file.read_text(encoding="utf-8").strip()
+        if not context:
+            logging.info("Context file is empty, skipping")
+            context_file.unlink(missing_ok=True)
+            return
+
+        logging.info("Flushing session %s: %d chars", session_id, len(context))
+
+        # Run the LLM extraction
+        response = asyncio.run(run_flush(context))
+
+        # Append to daily log
+        if "FLUSH_OK" in response:
+            logging.info("Result: FLUSH_OK")
+            append_to_daily_log(
+                "FLUSH_OK - Nothing worth saving from this session", "Memory Flush"
+            )
+        elif "FLUSH_ERROR" in response:
+            logging.error("Result: %s", response)
+            append_to_daily_log(response, "Memory Flush")
+        else:
+            logging.info("Result: saved to daily log (%d chars)", len(response))
+            append_to_daily_log(response, "Session", session_id=session_id)
+
+        # Update dedup state (kept for backward-compatibility / inspection;
+        # the lock file is now the actual source of truth for dedup)
+        save_flush_state({"session_id": session_id, "timestamp": time.time()})
+
+        # Clean up context file
         context_file.unlink(missing_ok=True)
-        return
 
-    logging.info("Flushing session %s: %d chars", session_id, len(context))
+        # End-of-day auto-compilation: if it's past the compile hour and today's
+        # log hasn't been compiled yet, trigger compile.py in the background.
+        maybe_trigger_compilation()
 
-    # Run the LLM extraction
-    response = asyncio.run(run_flush(context))
-
-    # Append to daily log
-    if "FLUSH_OK" in response:
-        logging.info("Result: FLUSH_OK")
-        append_to_daily_log(
-            "FLUSH_OK - Nothing worth saving from this session", "Memory Flush"
-        )
-    elif "FLUSH_ERROR" in response:
-        logging.error("Result: %s", response)
-        append_to_daily_log(response, "Memory Flush")
-    else:
-        logging.info("Result: saved to daily log (%d chars)", len(response))
-        append_to_daily_log(response, "Session")
-
-    # Update dedup state
-    save_flush_state({"session_id": session_id, "timestamp": time.time()})
-
-    # Clean up context file
-    context_file.unlink(missing_ok=True)
-
-    # End-of-day auto-compilation: if it's past the compile hour and today's
-    # log hasn't been compiled yet, trigger compile.py in the background.
-    maybe_trigger_compilation()
-
-    logging.info("Flush complete for session %s", session_id)
+        logging.info("Flush complete for session %s", session_id)
+    finally:
+        # Always release the dedup lock — even if the body raised — so the next
+        # session-end for this session can proceed without waiting for the
+        # 5-minute stale-lock timeout.
+        lock_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

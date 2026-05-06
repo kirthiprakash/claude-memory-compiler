@@ -63,6 +63,39 @@ The Quick Start above sets up project-local hooks that only fire when Claude Cod
 
 Operational state (`flush.log`, `state.json`, temp context files) always stays in the repo — only your knowledge output respects `MEMORY_OUTPUT_DIR`.
 
+## GitHub Copilot CLI Support
+
+The memory compiler also works with the GitHub Copilot CLI (`copilot`). Hook scripts adapted for Copilot's input format and SQLite session store live in `copilot-hooks/`.
+
+**Differences vs. Claude Code:**
+- Copilot's `sessionEnd` input has no `session_id` or transcript path — only `cwd` and `reason`. The hook resolves the session by querying `~/.copilot/session-store.db` for the most recent session matching `cwd`.
+- Copilot loads `hooks.json` from the **current working directory** (not a global file), so hooks fire only in projects that have a `hooks.json`.
+- Output reuses the same `flush.py` + vault format as Claude Code, so daily logs and knowledge articles end up alongside Claude Code's output in the same `MEMORY_OUTPUT_DIR`.
+
+### Setup
+
+1. Set two environment variables (e.g. in `~/.zshrc` or `~/.bashrc`):
+   ```bash
+   export MEMORY_OUTPUT_DIR="$HOME/path/to/your/vault"
+   export MEMORY_COMPILER_DIR="$HOME/path/to/claude-memory-compiler"
+   ```
+
+2. Drop `copilot-hooks/hooks.json` into any project where you want Copilot conversations captured. Easiest: symlink it.
+   ```bash
+   ln -s "$MEMORY_COMPILER_DIR/copilot-hooks/hooks.json" hooks.json
+   ```
+   Or copy it if you don't want a symlink in the project tree. The committed `hooks.json` already uses `${MEMORY_COMPILER_DIR}` so the same file works across all projects without edits.
+
+3. Run `copilot` in that project — `sessionStart` injects the vault index, `sessionEnd` queues a flush in the background.
+
+To capture **every** Copilot session everywhere, drop the symlink into each project's root, or wrap `copilot` in a shell function that creates the symlink on demand:
+```bash
+copilot() {
+  [ -e hooks.json ] || ln -s "$MEMORY_COMPILER_DIR/copilot-hooks/hooks.json" hooks.json
+  command copilot "$@"
+}
+```
+
 ## Key Commands
 
 ```bash

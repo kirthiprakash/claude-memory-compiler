@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "uv run --directory \"${MEMORY_COMPILER_DIR:-$HOME/workspace/projects/opensource/claude-memory-compiler}\" python \"${MEMORY_COMPILER_DIR:-$HOME/workspace/projects/opensource/claude-memory-compiler}/copilot-hooks/session-start.py\"",
+        "timeoutSec": 15
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "uv run --directory \"${MEMORY_COMPILER_DIR:-$HOME/workspace/projects/opensource/claude-memory-compiler}\" python \"${MEMORY_COMPILER_DIR:-$HOME/workspace/projects/opensource/claude-memory-compiler}/copilot-hooks/session-end.py\"",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}

@@ -57,7 +57,7 @@ After answering, do the following:
    filed: {timestamp[:10]}
    ---
    ```
-3. Update {VAULT_DIR / 'claude-memory-index.md'} with a new row for this Q&A article
+3. Update {VAULT_DIR / 'memory-index.md'} with a new row for this Q&A article (in the `## Knowledge Articles` table)
 """
 
     prompt = f"""You are a knowledge base query engine. Answer the user's question by

@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 _VAULT = Path(os.environ["MEMORY_OUTPUT_DIR"]).expanduser() if "MEMORY_OUTPUT_DIR" in os.environ else ROOT
-INDEX_FILE = _VAULT / "claude-memory-index.md"
+INDEX_FILE = _VAULT / "memory-index.md"
 
 MAX_CONTEXT_CHARS = 20_000
 MAX_LOG_LINES = 30

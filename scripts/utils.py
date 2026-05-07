@@ -79,7 +79,7 @@ def read_wiki_index() -> str:
     """Read the knowledge base index file."""
     if INDEX_FILE.exists():
         return INDEX_FILE.read_text(encoding="utf-8")
-    return "# Claude Memory Index\n\n| Article | Summary | Compiled From | Updated |\n|---------|---------|---------------|---------|"
+    return "# Memory Index\n\n## Knowledge Articles\n\n| Article | Summary | Compiled From | Updated |\n|---------|---------|---------------|---------|\n\n## Sessions\n\n| Date | Time | Session | Agent | CWD | Topic | Resume |\n|------|------|---------|-------|-----|-------|--------|"
 
 
 def read_all_wiki_content() -> str:

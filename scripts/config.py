@@ -15,7 +15,7 @@ LOG_FILE = SCRIPTS_DIR / "flush.log"
 
 # Tolaria vault — flat structure, all notes at vault root
 VAULT_DIR = Path(os.environ["MEMORY_OUTPUT_DIR"]).expanduser() if "MEMORY_OUTPUT_DIR" in os.environ else ROOT_DIR
-INDEX_FILE = VAULT_DIR / "claude-memory-index.md"
+INDEX_FILE = VAULT_DIR / "memory-index.md"
 
 # Aliases kept for compatibility — all point to vault root (no subdirectories)
 KNOWLEDGE_DIR = VAULT_DIR

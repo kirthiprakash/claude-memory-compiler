@@ -17,13 +17,13 @@ You don't manually organize your knowledge. You have conversations, and the LLM 
 
 ## Output Location
 
-All generated files (daily logs + knowledge articles + index) are written to a single flat directory — the **vault** — controlled by the `MEMORY_OUTPUT_DIR` environment variable. If unset, the vault is the repo root. Setting it to a Tolaria or Obsidian vault makes the output render as native notes.
+All generated files (daily logs + knowledge articles + index) are written to a single flat directory — the **vault** — controlled by the `MEMORY_OUTPUT_DIR` environment variable. If unset, the vault is the repo root. The vault is plain markdown with YAML frontmatter conventions (`type:`, `tags:`, `[[wikilinks]]`, relationship fields), so it drops cleanly into any flat-file knowledge tool the user already has.
 
 ```
 $VAULT/
 ├── daily-2026-04-01.md          # Daily logs (type: Daily Log)
 ├── daily-2026-04-02.md
-├── claude-memory-index.md       # Master catalog of knowledge articles
+├── memory-index.md       # Master catalog of knowledge articles
 ├── supabase-auth.md             # Knowledge articles (type: Knowledge Article)
 ├── auth-and-webhooks.md         # Connection articles (type: Connection)
 ├── how-to-handle-auth.md        # Filed Q&A answers (type: Q&A)
@@ -31,6 +31,40 @@ $VAULT/
 ```
 
 Articles are distinguished by `type:` frontmatter, not subdirectories — flat by design so they coexist with other vault notes.
+
+---
+
+## Skill Architecture (primary interface)
+
+The system's primary interface is a single skill called **`journal`** with three modes selected by argument:
+
+| Invocation | Mode | What it does |
+|---|---|---|
+| `/journal` | save (default) | Append/update an entry for the current session in today's daily-log file; upsert a row in `memory-index.md`'s `## Sessions` table |
+| `/journal recall [arg]` | recall | Load relevant prior context from the vault. Args: (none) → show index summary; `yesterday` / `today` / `cwd` / `here` / `<session-id>` / `<topic>` |
+| `/journal compile [arg]` | compile | Discover uncompiled daily logs, ask user to confirm if too many, extract knowledge articles, update the `## Knowledge Articles` table |
+
+Files:
+
+```
+skills/journal/
+├── SKILL.md              # Single text-heavy file — instructions for the LLM. Three-mode dispatch.
+└── _lib/
+    ├── unprocessed.py    # CLI: list uncompiled daily logs, apply threshold check
+    └── compile_state.py  # CLI: record/query compile state per log
+```
+
+**Why a skill (not hooks):**
+- Active-LLM execution: zero extra API round-trip. Free on Pro/Max subscriptions; only marginal turn tokens on API billing.
+- Full conversation context: no transcript truncation. Hooks could only see the last 30 turns.
+- Cross-agent portability: same SKILL.md works in Claude Code, Copilot CLI, and other coding agents that honor SKILL.md.
+- No `hooks.json`-must-be-in-cwd limitation (Copilot CLI specifically had this).
+
+**Concurrency**: skill writes use the Edit tool with the `<!-- MEMORY_MAINTENANCE_BOUNDARY -->` HTML-comment anchor in the daily-log file. Two parallel sessions writing the same daily log get optimistic-CAS retries naturally — if Edit fails because the anchor's surrounding context shifted, re-read and retry once.
+
+**Watermark dedup** (within a session): each Session entry includes a `<!-- last-journaled: <ISO-timestamp> -->` marker. Re-running `/journal` in the same session within 30 minutes updates the existing entry instead of appending a new one, summarising only material added since the marker.
+
+The legacy hook-based pipeline is described later in this document under [Hook System (legacy / opt-in)](#hook-system-legacy--opt-in). Hook source code remains in the repo but its config is removed by default.
 
 ---
 
@@ -93,7 +127,7 @@ Compiled by `compile.py` from daily logs. Flat `.md` files at the vault root, di
 | `Connection` | Cross-cutting synthesis linking 2+ concepts |
 | `Q&A` | Filed query answer |
 
-Plus the index file `claude-memory-index.md` (master catalog).
+Plus the index file `memory-index.md` (master catalog).
 
 ### Layer 3: This File (AGENTS.md)
 
@@ -103,22 +137,38 @@ The schema that tells the LLM how to compile and maintain the knowledge base. Th
 
 ## Structural Files
 
-### `claude-memory-index.md` - Master Catalog
+### `memory-index.md` - Master Catalog (two tables)
 
-A table listing every knowledge article. This is the primary retrieval mechanism — the LLM reads this FIRST when answering any query, then selects relevant articles to read in full.
+The index file holds two tables that share one file: `## Knowledge Articles` (owned by the compile mode) and `## Sessions` (owned by the journal save mode).
 
 Format:
 
 ```markdown
-# Claude Memory Index
+---
+type: Memory Index
+tags: [index]
+updated: YYYY-MM-DD
+---
+
+# Memory Index
+
+## Knowledge Articles
 
 | Article | Summary | Compiled From | Updated |
 |---------|---------|---------------|---------|
-| [[supabase-auth]] | Row-level security patterns and JWT gotchas | daily-2026-04-02 | 2026-04-02 |
-| [[auth-and-webhooks]] | Token verification patterns shared across auth and webhooks | daily-2026-04-02, daily-2026-04-04 | 2026-04-04 |
+| [[supabase-auth]] | Row-level security patterns and JWT gotchas | daily-log-2026-04-02 | 2026-04-02 |
+| [[auth-and-webhooks]] | Token verification patterns shared across auth and webhooks | daily-log-2026-04-02, daily-log-2026-04-04 | 2026-04-04 |
+
+## Sessions
+
+| Date | Time | Session | Agent | CWD | Topic | Resume |
+|------|------|---------|-------|-----|-------|--------|
+| 2026-04-02 | 09:14 | abc12345 | claude-code | my-app | Auth bugs in middleware | `claude --resume abc12345-…` |
 ```
 
 Wikilinks use the slug (filename without extension) — no subfolder prefix, since articles are flat.
+
+**Ownership rule**: each table is written by exactly one mode of the journal skill. The compile mode never touches the Sessions table; the save mode never touches the Knowledge Articles table.
 
 ---
 
@@ -218,13 +268,13 @@ filed: 2026-04-05
 When processing a daily log:
 
 1. Read the daily log file (`daily-YYYY-MM-DD.md`)
-2. Read `claude-memory-index.md` to understand current knowledge state
+2. Read `memory-index.md` to understand current knowledge state
 3. Read existing articles that may need updating
 4. For each piece of knowledge found in the log:
    - If an existing knowledge article covers this topic: UPDATE it, add the daily log as a source
    - If it's a new topic: CREATE a new flat `slug.md` with `type: Knowledge Article` frontmatter
 5. If the log reveals a non-obvious connection between 2+ existing concepts: CREATE a flat article with `type: Connection`
-6. UPDATE `claude-memory-index.md` with new/modified entries
+6. UPDATE `memory-index.md` with new/modified entries
 
 **Important guidelines:**
 - A single daily log may touch 3-10 knowledge articles
@@ -237,7 +287,7 @@ When processing a daily log:
 
 ### 2. Query (Ask the Knowledge Base)
 
-1. Read `claude-memory-index.md` (the master catalog)
+1. Read `memory-index.md` (the master catalog)
 2. Based on the question, identify 3-10 relevant articles from the index
 3. Read those articles in full
 4. Synthesize an answer with `[[wikilink]]` citations
@@ -299,9 +349,9 @@ claude-memory-compiler/                # The code (this repo)
 |   |-- pre-compact.py                 # Safety net before auto-compaction
 |-- reports/                           # Lint reports (gitignored)
 
-$MEMORY_OUTPUT_DIR/                    # The vault (separate, e.g. ~/Tolaria-vault/)
+$MEMORY_OUTPUT_DIR/                    # The vault (separate, e.g. ~/notes/)
 |-- daily-YYYY-MM-DD.md                # Daily logs - one per day, type: Daily Log
-|-- claude-memory-index.md             # Master catalog of knowledge articles
+|-- memory-index.md             # Master catalog of knowledge articles
 |-- supabase-auth.md                   # Knowledge articles (type: Knowledge Article)
 |-- auth-and-webhooks.md               # Connections (type: Connection)
 |-- how-to-handle-redirects.md         # Q&A (type: Q&A)
@@ -311,7 +361,18 @@ Operational state (`state.json`, `flush.log`, temp context files) always lives i
 
 ---
 
-## Hook System (Automatic Capture)
+## Hook System (legacy / opt-in)
+
+The hook-based pipeline below predates the skill. It still works (source code is preserved), but the recommended interface is the journal skill above. Reasons to consider hooks:
+- You want truly automatic capture (skill requires you to type `/journal`).
+- You want a `PreCompact` safety net to capture context before auto-compaction discards it.
+
+Reasons to avoid hooks:
+- They don't see beyond the last ~30 turns of the transcript (hardcoded truncation).
+- They register at multiple levels (`~/.claude/settings.json` plus project `.claude/settings.json`), and both fire when the agent is opened in the repo, doubling the per-flush cost.
+- Each fire spawns a separate `claude_agent_sdk.query()` round-trip (~$0.02-0.05 each on API billing, silent on subscription).
+
+If you re-enable hooks, the recipe is below. The journal skill and the hooks both write to the same vault and are format-compatible — they can coexist if you want both.
 
 Hooks fire automatically when Claude Code starts/ends/compacts. There are two valid scopes for hook configuration:
 
@@ -354,7 +415,7 @@ Fires for **every** Claude Code session in any project. Requires absolute paths 
 
 **`session-start.py`** (SessionStart)
 - Pure local I/O, no API calls, runs in under 1 second
-- Reads `claude-memory-index.md` and the most recent daily log from the vault
+- Reads `memory-index.md` and the most recent daily log from the vault
 - Outputs JSON to stdout: `{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "..."}}`
 - Claude sees the knowledge base index at the start of every session
 - Max context: 20,000 characters
@@ -451,7 +512,7 @@ uv run python scripts/query.py "What auth patterns do I use?"
 uv run python scripts/query.py "What's my error handling strategy?" --file-back
 ```
 
-With `--file-back`, creates a flat Q&A article (`type: Q&A`) at the vault root and updates `claude-memory-index.md`. This is the compounding loop — every question makes the KB smarter.
+With `--file-back`, creates a flat Q&A article (`type: Q&A`) at the vault root and updates `memory-index.md`. This is the compounding loop — every question makes the KB smarter.
 
 ### lint.py - Health Checks
 
@@ -522,9 +583,9 @@ No API key needed - uses Claude Code's built-in credentials at `~/.claude/.crede
 
 Add new types via the `type:` frontmatter field (e.g. `type: Person`, `type: Project`, `type: Tool`). Define the article format in this file (AGENTS.md) and add the new type string to `_KNOWLEDGE_TYPES` in `scripts/utils.py` so the new articles are discoverable by lint, query, and compile. No subdirectories to create — files stay flat at the vault root.
 
-### Obsidian / Tolaria Integration
+### Flat-file Knowledge Tool Integration
 
-The output is pure markdown with `[[wikilinks]]` and `type:` frontmatter — works natively in both Obsidian and Tolaria vaults. Set `MEMORY_OUTPUT_DIR` to your vault root and the daily logs and knowledge articles render as native notes alongside whatever else lives in the vault.
+The output is pure markdown with `[[wikilinks]]` and `type:` frontmatter — works natively with any flat-file knowledge tool that honors YAML frontmatter (note-graph apps, Obsidian-style tools, etc.). Set `MEMORY_OUTPUT_DIR` to your vault root and the daily logs and knowledge articles render as native notes alongside whatever else lives in the vault.
 
 ### Scaling Beyond Index-Guided Retrieval
 

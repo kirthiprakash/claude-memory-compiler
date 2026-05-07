@@ -111,7 +111,7 @@ Read the daily log above and compile it into knowledge articles in the Tolaria v
 
 4. **Update existing articles** if this log adds new information — read, edit, add source to frontmatter.
 
-5. **Update the index** at {VAULT_DIR / 'claude-memory-index.md'} — add/update entries:
+5. **Update the index** at {VAULT_DIR / 'memory-index.md'} — add/update entries in the **`## Knowledge Articles`** table only (do NOT touch the `## Sessions` table — that is owned by the journal skill):
    ```
    | [[slug]] | One-line summary | {log_path.stem} | {timestamp[:10]} |
    ```

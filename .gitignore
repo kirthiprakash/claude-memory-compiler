@@ -26,6 +26,10 @@ scripts/uv.lock
 # Claude Code local settings
 .claude/settings.local.json
 
+# Skill helper state (per-machine compile tracking)
+skills/journal/_lib/.compile-state.json
+skills/journal/_lib/__pycache__/
+
 # OS files
 .DS_Store
 Thumbs.db
